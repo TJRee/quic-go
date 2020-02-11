@@ -1,7 +1,7 @@
 package quic
 
 type sendQueue struct {
-	queue     chan *packedPacket
+	queue     chan *packetBuffer
 	closeChan chan struct{}
 	conn      connection
 }
@@ -10,27 +10,27 @@ func newSendQueue(conn connection) *sendQueue {
 	s := &sendQueue{
 		conn:      conn,
 		closeChan: make(chan struct{}),
-		queue:     make(chan *packedPacket, 1),
+		queue:     make(chan *packetBuffer, 1),
 	}
 	return s
 }
 
-func (h *sendQueue) Send(p *packedPacket) {
+func (h *sendQueue) Send(p *packetBuffer) {
 	h.queue <- p
 }
 
 func (h *sendQueue) Run() error {
-	var p *packedPacket
+	var p *packetBuffer
 	for {
 		select {
 		case <-h.closeChan:
 			return nil
 		case p = <-h.queue:
 		}
-		if err := h.conn.Write(p.raw); err != nil {
+		if err := h.conn.Write(p.Data); err != nil {
 			return err
 		}
-		p.buffer.Release()
+		p.Release()
 	}
 }
 
