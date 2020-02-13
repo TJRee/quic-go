@@ -2,13 +2,15 @@ package quic
 
 type sendQueue struct {
 	queue     chan *packedPacket
-	closeChan chan struct{}
+	closeChan chan struct{} // closed when Close() is called
+	closed    chan struct{} // closed when the run loop returns
 	conn      connection
 }
 
 func newSendQueue(conn connection) *sendQueue {
 	s := &sendQueue{
 		conn:      conn,
+		closed:    make(chan struct{}),
 		closeChan: make(chan struct{}),
 		queue:     make(chan *packedPacket, 1),
 	}
@@ -20,20 +22,28 @@ func (h *sendQueue) Send(p *packedPacket) {
 }
 
 func (h *sendQueue) Run() error {
-	var p *packedPacket
+	defer close(h.closed)
+	var shouldClose bool
 	for {
+		if shouldClose && len(h.queue) == 0 {
+			return nil
+		}
 		select {
 		case <-h.closeChan:
-			return nil
-		case p = <-h.queue:
+			h.closeChan = nil // prevent this case from being selected again
+			// make sure that all queued packets are actually sent out
+			shouldClose = true
+		case p := <-h.queue:
+			if err := h.conn.Write(p.raw); err != nil {
+				return err
+			}
+			p.buffer.Release()
 		}
-		if err := h.conn.Write(p.raw); err != nil {
-			return err
-		}
-		p.buffer.Release()
 	}
 }
 
 func (h *sendQueue) Close() {
 	close(h.closeChan)
+	// wait until the run loop returned
+	<-h.closed
 }
